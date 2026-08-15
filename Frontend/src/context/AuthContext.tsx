@@ -32,7 +32,6 @@ interface AuthContextType {
   login: (email: string, password: string) => Promise<void>;
   register: (data: any) => Promise<void>;
   logout: () => Promise<void>;
-  switchDemoUser: (email: string) => Promise<void>;
   refreshUser: () => Promise<void>;
   verifyEmail: (code: string) => Promise<void>;
   resendVerificationEmail: (email?: string, password?: string) => Promise<void>;
@@ -398,14 +397,6 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     }
   };
 
-  const switchDemoUser = async (email: string) => {
-    setLoading(true);
-    // Dev Account Passwords
-    const password = email === 'admin@bookslx.local' ? 'admin123' : 'user123';
-    await login(email, password);
-    setLoading(false);
-  };
-
   return (
     <AuthContext.Provider
       value={{
@@ -415,7 +406,6 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         login,
         register,
         logout,
-        switchDemoUser,
         refreshUser: fetchCurrentUser,
         verifyEmail,
         resendVerificationEmail,

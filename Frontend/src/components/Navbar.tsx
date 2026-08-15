@@ -21,7 +21,7 @@ import {
 import { api } from '../api/client';
 
 export const Navbar: React.FC = () => {
-  const { user, logout, switchDemoUser } = useAuth();
+  const { user, logout } = useAuth();
   const { theme, setTheme } = useTheme();
   const navigate = useNavigate();
   const location = useLocation();
@@ -50,48 +50,6 @@ export const Navbar: React.FC = () => {
 
   return (
     <header className="sticky top-0 z-40 w-full border-b border-slate-200 dark:border-graphite/80 bg-ivory/90 dark:bg-obsidian/90 backdrop-blur-md transition-colors">
-      {/* Dev Demo Switcher Banner */}
-      <div className="bg-gradient-to-r from-obsidian via-graphite to-forest text-smoky py-1.5 px-4 text-xs flex flex-wrap items-center justify-between border-b border-gold/20">
-        <div className="flex items-center space-x-2">
-          <span className="bg-gold/20 text-gold px-2 py-0.5 rounded font-semibold tracking-wider text-[10px] uppercase">
-            Development Mode
-          </span>
-          <span className="text-slate-300">Fast Demo Account Switcher:</span>
-        </div>
-        <div className="flex items-center space-x-3 my-0.5">
-          <button
-            onClick={() => switchDemoUser('rahul@bookslx.local')}
-            className={`px-2.5 py-0.5 rounded-full transition ${
-              user?.email === 'rahul@bookslx.local'
-                ? 'bg-gold text-obsidian font-bold shadow-sm'
-                : 'bg-graphite text-slate-300 hover:bg-slate-700'
-            }`}
-          >
-            👤 Rahul (Buyer)
-          </button>
-          <button
-            onClick={() => switchDemoUser('priya@bookslx.local')}
-            className={`px-2.5 py-0.5 rounded-full transition ${
-              user?.email === 'priya@bookslx.local'
-                ? 'bg-gold text-obsidian font-bold shadow-sm'
-                : 'bg-graphite text-slate-300 hover:bg-slate-700'
-            }`}
-          >
-            📚 Priya (Seller)
-          </button>
-          <button
-            onClick={() => switchDemoUser('admin@bookslx.local')}
-            className={`px-2.5 py-0.5 rounded-full transition ${
-              user?.email === 'admin@bookslx.local'
-                ? 'bg-gold text-obsidian font-bold shadow-sm'
-                : 'bg-graphite text-slate-300 hover:bg-slate-700'
-            }`}
-          >
-            🛡️ Admin
-          </button>
-        </div>
-      </div>
-
       {/* Main Navbar */}
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 h-16 flex items-center justify-between gap-4">
         {/* Logo */}
