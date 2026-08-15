@@ -1,10 +1,11 @@
 import { Request, Response, NextFunction } from 'express';
 import jwt from 'jsonwebtoken';
 import { env } from '../config/env';
+import { prisma } from '../config/db';
 import { UnauthorizedError } from '../utils/errors';
 import { AuthUser } from '../types/express';
 
-export const authenticate = (req: Request, _res: Response, next: NextFunction) => {
+export const authenticate = async (req: Request, _res: Response, next: NextFunction) => {
   try {
     let token: string | undefined;
 
@@ -19,13 +20,20 @@ export const authenticate = (req: Request, _res: Response, next: NextFunction) =
     }
 
     const decoded = jwt.verify(token, env.JWT_SECRET) as AuthUser;
-    req.user = {
-      id: decoded.id,
-      name: decoded.name,
-      email: decoded.email,
-      role: decoded.role,
-    };
 
+    // A token can be validly signed yet reference a user that no longer exists
+    // (e.g. after a reseed wipes users). Reject those here so downstream writes
+    // fail with a clean 401 instead of confusing foreign-key constraint errors.
+    const user = await prisma.user.findUnique({
+      where: { id: decoded.id },
+      select: { id: true, name: true, email: true, role: true },
+    });
+
+    if (!user) {
+      throw new UnauthorizedError('Account no longer exists. Please sign in again.', 'TOKEN_INVALID');
+    }
+
+    req.user = user as AuthUser;
     next();
   } catch (error) {
     if (error instanceof jwt.JsonWebTokenError) {
