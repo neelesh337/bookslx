@@ -1,7 +1,14 @@
 import axios from 'axios';
 
+// In dev, Vite proxies /api → http://localhost:5000 (see vite.config.ts).
+// In production (Vercel), point at the deployed Render API — override with the
+// VITE_API_URL env var if the backend ever moves.
+const API_BASE_URL =
+  import.meta.env.VITE_API_URL ||
+  (import.meta.env.PROD ? 'https://bookslx.onrender.com/api' : '/api');
+
 export const api = axios.create({
-  baseURL: '/api',
+  baseURL: API_BASE_URL,
   withCredentials: true,
   headers: {
     'Content-Type': 'application/json',
