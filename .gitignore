@@ -9,6 +9,13 @@ dist/
 .env.local
 .env.*.local
 
+# Document
+DATA_STORAGE_ARCHITECTURE.md
+ARCHITECTURE.md
+DATA_STORAGE_QUICK_REFERENCE.md
+EMAIL_VERIFICATION_SETUP.md
+SECURITY_AND_ERROR_HANDLING.md
+
 # Databases
 *.db
 *.db-journal
