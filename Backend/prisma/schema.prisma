@@ -1,0 +1,391 @@
+// Prisma Schema for BooksLX MVP 1 P2P Second-Hand Book Marketplace
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = "file:./dev.db"
+}
+
+model User {
+  id             String    @id @default(uuid())
+  name           String
+  email          String    @unique
+  phone          String?
+  passwordHash   String
+  profileImage   String?
+  firebaseUid    String?   @unique
+  emailVerified  Boolean   @default(false)
+  verifiedAt     DateTime?
+  rating         Float     @default(5.0)
+  totalSales     Int       @default(0)
+  totalPurchases Int       @default(0)
+  role           String    @default("USER") // USER, ADMIN
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+
+  addresses          Address[]
+  listings           Listing[]        @relation("SellerListings")
+  offersAsBuyer      Offer[]          @relation("BuyerOffers")
+  offersAsSeller     Offer[]          @relation("SellerOffers")
+  offerHistories     OfferHistory[]   @relation("SenderHistories")
+  cart               Cart?
+  ordersAsBuyer      Order[]          @relation("BuyerOrders")
+  ordersAsSeller     Order[]          @relation("SellerOrders")
+  disputesRaised     Dispute[]        @relation("RaisedDisputes")
+  disputeEvidences   DisputeEvidence[] @relation("UploadedEvidences")
+  reviewsGiven       Review[]         @relation("ReviewerReviews")
+  reviewsReceived    Review[]         @relation("RevieweeReviews")
+  wishlist           Wishlist[]
+  notifications      Notification[]
+  orderStatusChanges OrderStatusHistory[] @relation("ChangedByHistory")
+
+  @@index([email])
+}
+
+model Address {
+  id              String   @id @default(uuid())
+  userId          String
+  label           String   @default("Home")
+  name            String
+  phone           String
+  line1           String
+  line2           String?
+  city            String
+  state           String
+  postalCode      String
+  country         String   @default("India")
+  isDefault       Boolean  @default(false)
+  isPickupAddress Boolean  @default(false)
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+}
+
+model Book {
+  id          String   @id @default(uuid())
+  title       String
+  author      String
+  isbn        String   @unique
+  publisher   String?
+  edition     String?
+  category    String
+  description String
+  coverImage  String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  listings Listing[]
+
+  @@index([isbn])
+  @@index([category])
+  @@index([title])
+}
+
+model Listing {
+  id                String   @id @default(uuid())
+  sellerId          String
+  bookId            String
+  askingPrice       Float
+  minimumOfferPrice Float?
+  condition         String   // LIKE_NEW, EXCELLENT, GOOD, ACCEPTABLE, POOR
+  conditionDetails  String   // JSON string
+  status            String   @default("ACTIVE") // ACTIVE, RESERVED, SOLD, PAUSED, DELETED
+  reservedUntil     DateTime?
+  reservedByUserId  String?
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+
+  seller    User           @relation("SellerListings", fields: [sellerId], references: [id], onDelete: Cascade)
+  book      Book           @relation(fields: [bookId], references: [id], onDelete: Cascade)
+  images    ListingImage[]
+  offers    Offer[]
+  cartItems CartItem[]
+  orders    Order[]
+  wishlists Wishlist[]
+
+  @@index([sellerId])
+  @@index([bookId])
+  @@index([status])
+  @@index([askingPrice])
+}
+
+model ListingImage {
+  id           String   @id @default(uuid())
+  listingId    String
+  url          String
+  altText      String?
+  isPrimary    Boolean  @default(false)
+  displayOrder Int      @default(0)
+
+  listing Listing @relation(fields: [listingId], references: [id], onDelete: Cascade)
+
+  @@index([listingId])
+}
+
+model Offer {
+  id           String   @id @default(uuid())
+  listingId    String
+  buyerId      String
+  sellerId     String
+  currentPrice Float
+  status       String   @default("PENDING") // PENDING, COUNTERED, ACCEPTED, REJECTED, EXPIRED, CANCELLED
+  expiresAt    DateTime
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  listing   Listing        @relation(fields: [listingId], references: [id], onDelete: Cascade)
+  buyer     User           @relation("BuyerOffers", fields: [buyerId], references: [id], onDelete: Cascade)
+  seller    User           @relation("SellerOffers", fields: [sellerId], references: [id], onDelete: Cascade)
+  histories OfferHistory[]
+
+  @@index([listingId])
+  @@index([buyerId])
+  @@index([sellerId])
+  @@index([status])
+}
+
+model OfferHistory {
+  id        String   @id @default(uuid())
+  offerId   String
+  senderId  String
+  price     Float
+  message   String?
+  action    String
+  createdAt DateTime @default(now())
+
+  offer  Offer @relation(fields: [offerId], references: [id], onDelete: Cascade)
+  sender User  @relation("SenderHistories", fields: [senderId], references: [id], onDelete: Cascade)
+
+  @@index([offerId])
+}
+
+model Cart {
+  id        String   @id @default(uuid())
+  userId    String   @unique
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  user  User       @relation(fields: [userId], references: [id], onDelete: Cascade)
+  items CartItem[]
+}
+
+model CartItem {
+  id        String   @id @default(uuid())
+  cartId    String
+  listingId String
+  addedAt   DateTime @default(now())
+
+  cart    Cart    @relation(fields: [cartId], references: [id], onDelete: Cascade)
+  listing Listing @relation(fields: [listingId], references: [id], onDelete: Cascade)
+
+  @@unique([cartId, listingId])
+  @@index([cartId])
+}
+
+model Order {
+  id                      String   @id @default(uuid())
+  orderNumber             String   @unique
+  buyerId                 String
+  sellerId                String
+  listingId               String
+  totalAmount             Float
+  bookPrice               Float
+  shippingFee             Float    @default(50.0)
+  platformFee             Float    @default(20.0)
+  discount                Float    @default(0.0)
+  status                  String   @default("PAYMENT_PENDING")
+  deliveryAddressSnapshot String   // JSON string
+  pickupAddressSnapshot   String   // JSON string
+  idempotencyKey          String?  @unique
+  createdAt               DateTime @default(now())
+  updatedAt               DateTime @updatedAt
+
+  buyer         User                 @relation("BuyerOrders", fields: [buyerId], references: [id], onDelete: Cascade)
+  seller        User                 @relation("SellerOrders", fields: [sellerId], references: [id], onDelete: Cascade)
+  listing       Listing              @relation(fields: [listingId], references: [id], onDelete: Cascade)
+  payment       Payment?
+  shipment      Shipment?
+  disputes      Dispute[]
+  reviews       Review[]
+  statusHistory OrderStatusHistory[]
+
+  @@index([orderNumber])
+  @@index([buyerId])
+  @@index([sellerId])
+  @@index([status])
+}
+
+model OrderStatusHistory {
+  id          String   @id @default(uuid())
+  orderId     String
+  fromStatus  String
+  toStatus    String
+  changedById String?
+  reason      String?
+  createdAt   DateTime @default(now())
+
+  order     Order @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  changedBy User? @relation("ChangedByHistory", fields: [changedById], references: [id], onDelete: SetNull)
+
+  @@index([orderId])
+}
+
+model Payment {
+  id                   String   @id @default(uuid())
+  orderId              String   @unique
+  paymentNumber        String   @unique
+  provider             String   @default("mock")
+  providerTransactionId String?
+  amount               Float
+  status               String   @default("PENDING")
+  idempotencyKey       String?  @unique
+  metadata             String?  // JSON string
+  createdAt            DateTime @default(now())
+  updatedAt            DateTime @updatedAt
+
+  order  Order          @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  events PaymentEvent[]
+
+  @@index([orderId])
+  @@index([status])
+}
+
+model PaymentEvent {
+  id          String   @id @default(uuid())
+  paymentId   String
+  provider    String
+  eventId     String
+  eventType   String
+  payload     String   // JSON string
+  processedAt DateTime @default(now())
+  status      String
+
+  payment Payment @relation(fields: [paymentId], references: [id], onDelete: Cascade)
+
+  @@index([paymentId])
+}
+
+model Shipment {
+  id              String   @id @default(uuid())
+  orderId         String   @unique
+  courierName     String   @default("BooksLX Logistics Express")
+  trackingNumber  String   @unique
+  trackingUrl     String
+  status          String   @default("CREATED")
+  estDeliveryDate DateTime
+  shippedAt       DateTime?
+  deliveredAt     DateTime?
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  order  Order           @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  events ShipmentEvent[]
+
+  @@index([orderId])
+  @@index([trackingNumber])
+}
+
+model ShipmentEvent {
+  id          String   @id @default(uuid())
+  shipmentId  String
+  status      String
+  description String
+  location    String?
+  timestamp   DateTime @default(now())
+
+  shipment Shipment @relation(fields: [shipmentId], references: [id], onDelete: Cascade)
+
+  @@index([shipmentId])
+}
+
+model Dispute {
+  id                String    @id @default(uuid())
+  orderId           String
+  raisedById        String
+  reason            String
+  description       String
+  status            String    @default("OPEN")
+  resolutionOutcome String?
+  resolutionNotes   String?
+  resolvedAt        DateTime?
+  createdAt         DateTime  @default(now())
+  updatedAt         DateTime  @updatedAt
+
+  order     Order             @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  raisedBy  User              @relation("RaisedDisputes", fields: [raisedById], references: [id], onDelete: Cascade)
+  evidences DisputeEvidence[]
+
+  @@index([orderId])
+  @@index([raisedById])
+  @@index([status])
+}
+
+model DisputeEvidence {
+  id           String   @id @default(uuid())
+  disputeId    String
+  uploadedById String
+  url          String
+  description  String?
+  fileType     String   @default("image")
+  createdAt    DateTime @default(now())
+
+  dispute    Dispute @relation(fields: [disputeId], references: [id], onDelete: Cascade)
+  uploadedBy User    @relation("UploadedEvidences", fields: [uploadedById], references: [id], onDelete: Cascade)
+
+  @@index([disputeId])
+}
+
+model Review {
+  id                  String   @id @default(uuid())
+  orderId             String
+  reviewerId          String
+  revieweeId          String
+  rating              Int
+  communicationRating Int      @default(5)
+  accuracyRating      Int      @default(5)
+  shippingRating      Int      @default(5)
+  comment             String?
+  createdAt           DateTime @default(now())
+
+  order    Order @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  reviewer User  @relation("ReviewerReviews", fields: [reviewerId], references: [id], onDelete: Cascade)
+  reviewee User  @relation("RevieweeReviews", fields: [revieweeId], references: [id], onDelete: Cascade)
+
+  @@unique([orderId, reviewerId])
+  @@index([revieweeId])
+}
+
+model Wishlist {
+  id        String   @id @default(uuid())
+  userId    String
+  listingId String
+  createdAt DateTime @default(now())
+
+  user    User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+  listing Listing @relation(fields: [listingId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, listingId])
+  @@index([userId])
+}
+
+model Notification {
+  id        String   @id @default(uuid())
+  userId    String
+  type      String
+  title     String
+  message   String
+  link      String?
+  isRead    Boolean  @default(false)
+  createdAt DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([isRead])
+}
