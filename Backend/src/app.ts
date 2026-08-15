@@ -20,9 +20,19 @@ import { startMockShipmentJob, stopMockShipmentJob } from './jobs/advanceShipmen
 
 const app = express();
 
+// Normalize FRONTEND_URL (stray quotes / trailing slash from dashboard paste
+// errors) and always allow the deployed frontend as a fallback, so CORS keeps
+// working even if the env var is missing or misconfigured.
+const allowedOrigins = [
+  env.FRONTEND_URL,
+  'https://bookslx.vercel.app',
+  'http://localhost:5173',
+  'http://127.0.0.1:5173',
+].map((origin) => origin.replace(/["']/g, '').replace(/\/+$/, ''));
+
 app.use(
   cors({
-    origin: [env.FRONTEND_URL, 'http://localhost:5173', 'http://127.0.0.1:5173'],
+    origin: allowedOrigins,
     credentials: true,
   })
 );
