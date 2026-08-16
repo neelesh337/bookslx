@@ -140,6 +140,79 @@ describe('offer acceptance -> order creation', () => {
     expect(err.code).toBe('CANNOT_ACCEPT_OWN_COUNTER');
   });
 
+  describe('offer price validation (no ₹1 purchases)', () => {
+    it('rejects an initial offer below the ₹10 floor', async () => {
+      const book = await createBook();
+      const listing = await createListing({ sellerId: seller.id, bookId: book.id, price: 200 });
+      const err: any = await offerService.createOffer(buyer.id, listing.id, 1).catch((e) => e);
+      expect(err).toBeInstanceOf(AppError);
+      expect(err.code).toBe('INVALID_OFFER_PRICE');
+      expect(await prisma.offer.count()).toBe(0);
+    });
+
+    it('rejects a zero or non-numeric offer', async () => {
+      const book = await createBook();
+      const listing = await createListing({ sellerId: seller.id, bookId: book.id, price: 200 });
+      await expect(offerService.createOffer(buyer.id, listing.id, 0)).rejects.toThrow(AppError);
+      const err: any = await offerService.createOffer(buyer.id, listing.id, NaN).catch((e) => e);
+      expect(err).toBeInstanceOf(AppError);
+      expect(err.code).toBe('INVALID_OFFER_PRICE');
+    });
+
+    it('respects the seller minimum offer price', async () => {
+      const book = await createBook();
+      const listing = await createListing({
+        sellerId: seller.id,
+        bookId: book.id,
+        price: 200,
+        minimumOfferPrice: 50,
+      });
+      await expect(offerService.createOffer(buyer.id, listing.id, 20)).rejects.toThrow(AppError);
+      await expect(offerService.createOffer(buyer.id, listing.id, 50)).resolves.toBeTruthy();
+    });
+
+    it('rejects a counter offer below the ₹10 floor (the ₹1 exploit)', async () => {
+      const { offer } = await makeListingWithOffer();
+      const err: any = await offerService.counterOffer(buyer.id, offer.id, 1).catch((e) => e);
+      expect(err).toBeInstanceOf(AppError);
+      expect(err.code).toBe('INVALID_COUNTER_PRICE');
+      // The agreed price must be untouched — no ₹1 order can be created.
+      expect((await prisma.offer.findUnique({ where: { id: offer.id } }))?.currentPrice).toBe(150);
+      expect(await prisma.order.count()).toBe(0);
+    });
+
+    it('rejects a counter offer below the seller minimum', async () => {
+      const book = await createBook();
+      const listing = await createListing({
+        sellerId: seller.id,
+        bookId: book.id,
+        price: 200,
+        minimumOfferPrice: 60,
+      });
+      const expiresAt = new Date(Date.now() + 3_600_000);
+      const offer = await prisma.offer.create({
+        data: {
+          listingId: listing.id,
+          buyerId: buyer.id,
+          sellerId: seller.id,
+          currentPrice: 80,
+          status: 'PENDING',
+          expiresAt,
+        },
+      });
+      const err: any = await offerService.counterOffer(buyer.id, offer.id, 40).catch((e) => e);
+      expect(err).toBeInstanceOf(AppError);
+      expect(err.code).toBe('INVALID_COUNTER_PRICE');
+    });
+
+    it('still allows a legitimate counter offer of ₹10+', async () => {
+      const { offer } = await makeListingWithOffer();
+      const result: any = await offerService.counterOffer(buyer.id, offer.id, 120);
+      expect(result.currentPrice).toBe(120);
+      expect(result.status).toBe('COUNTERED');
+    });
+  });
+
   describe('getUserOffers (role-scoped, highest amount first)', () => {
     it('shows sellers only incoming offers sorted by price descending', async () => {
       const book = await createBook();

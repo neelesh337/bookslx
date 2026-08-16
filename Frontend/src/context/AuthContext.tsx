@@ -31,6 +31,13 @@ interface AuthContextType {
   user: User | null;
   loading: boolean;
   pendingVerificationEmail: string | null;
+  /**
+   * Whether the pending verification email has been confirmed in Firebase.
+   * Polled while a verification is pending, so the login page can flip from
+   * "check your inbox" to "verified — go to login" without a manual reload.
+   * Null while unknown.
+   */
+  emailVerified: boolean | null;
   login: (email: string, password: string) => Promise<void>;
   loginWithGoogle: () => Promise<void>;
   register: (data: any) => Promise<void>;
@@ -79,6 +86,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const [user, setUser] = useState<User | null>(null);
   const [loading, setLoading] = useState<boolean>(true);
   const [pendingVerificationEmail, setPendingVerificationEmail] = useState<string | null>(null);
+  const [emailVerified, setEmailVerified] = useState<boolean | null>(null);
 
   const fetchCurrentUser = async () => {
     // Snapshot whether a token existed before the request. If /auth/me 401s but
@@ -108,6 +116,40 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       setPendingVerificationEmail(pending);
     }
   }, []);
+
+  // While an email verification is pending, poll Firebase for the account's
+  // verification status. This lets the login page react to the link being
+  // clicked in another tab or on another device — Firebase marks the account
+  // verified regardless of where the link was opened.
+  useEffect(() => {
+    let cancelled = false;
+    setEmailVerified(null);
+
+    if (!auth || !pendingVerificationEmail) {
+      return;
+    }
+
+    const check = async () => {
+      if (!auth) return;
+      const currentUser = auth.currentUser;
+      if (!currentUser) return;
+      try {
+        await currentUser.reload();
+        if (!cancelled) {
+          setEmailVerified(currentUser.emailVerified);
+        }
+      } catch {
+        // Transient Firebase error — the next poll tick will retry.
+      }
+    };
+
+    check();
+    const interval = setInterval(check, 5000);
+    return () => {
+      cancelled = true;
+      clearInterval(interval);
+    };
+  }, [pendingVerificationEmail]);
 
   const loginWithGoogle = async () => {
     if (!auth) {
@@ -458,6 +500,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         user,
         loading,
         pendingVerificationEmail,
+        emailVerified,
         login,
         loginWithGoogle,
         register,

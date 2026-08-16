@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
-import { BookOpen, AlertCircle, Eye, EyeOff, Mail, Lock, User, Phone } from 'lucide-react';
+import { BookOpen, AlertCircle, Eye, EyeOff, Mail, Lock, User, Phone, CheckCircle2 } from 'lucide-react';
 
 const GoogleLogo: React.FC = () => (
   <svg viewBox="0 0 48 48" className="w-5 h-5" aria-hidden="true">
@@ -13,7 +13,7 @@ const GoogleLogo: React.FC = () => (
 );
 
 export const AuthPage: React.FC = () => {
-  const { login, loginWithGoogle, register, pendingVerificationEmail, resendVerificationEmail } = useAuth();
+  const { login, loginWithGoogle, register, pendingVerificationEmail, emailVerified, resendVerificationEmail } = useAuth();
   const navigate = useNavigate();
   const location = useLocation();
 
@@ -153,6 +153,35 @@ export const AuthPage: React.FC = () => {
     <div className="min-h-screen bg-gradient-to-br from-slate-50 to-slate-100 dark:from-obsidian dark:to-graphite flex items-center justify-center px-4 py-12">
       <div className="w-full max-w-md">
         {verificationSent ? (
+          emailVerified === true ? (
+            // Email Verified — the link was clicked (here or on another device).
+            <div className="rounded-3xl bg-white dark:bg-graphite border border-slate-200 dark:border-slate-800 shadow-2xl p-8 space-y-6">
+              <div className="text-center space-y-3">
+                <div className="w-16 h-16 rounded-3xl bg-green-500/10 border border-green-500/30 flex items-center justify-center mx-auto">
+                  <CheckCircle2 className="w-8 h-8 text-green-500" />
+                </div>
+                <h2 className="font-heading text-3xl font-extrabold text-slate-900 dark:text-ivory">
+                  Email Verified!
+                </h2>
+                <p className="text-sm text-slate-600 dark:text-slate-300">
+                  Your email has been confirmed. You can now sign in to your account.
+                </p>
+                <p className="text-xs text-slate-500">
+                  Verified: <span className="font-bold text-green-600">{pendingVerificationEmail}</span>
+                </p>
+              </div>
+
+              <button
+                onClick={() => {
+                  setVerificationSent(false);
+                  setError('');
+                }}
+                className="w-full py-3 rounded-xl font-bold text-sm bg-gradient-to-r from-gold to-amber-400 text-obsidian hover:from-amber-400 hover:to-yellow-400 shadow-lg transition"
+              >
+                Go to Login
+              </button>
+            </div>
+          ) : (
           // Email Verification Screen
           <div className="rounded-3xl bg-white dark:bg-graphite border border-slate-200 dark:border-slate-800 shadow-2xl p-8 space-y-6">
             <div className="text-center space-y-3">
@@ -217,6 +246,7 @@ export const AuthPage: React.FC = () => {
               Didn't receive the email? Check your spam folder or resend it above.
             </p>
           </div>
+          )
         ) : (
           // Login/Signup Form
           <div className="rounded-3xl bg-white dark:bg-graphite border border-slate-200 dark:border-slate-800 shadow-2xl p-8 space-y-6">

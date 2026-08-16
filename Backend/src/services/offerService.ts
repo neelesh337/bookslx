@@ -20,6 +20,12 @@ export class OfferService {
       throw new AppError(`Listing is currently ${listing.status} and unavailable for offers`);
     }
 
+    // Never trust the client with the price: reject non-numeric, zero, and
+    // absurdly low amounts so a buyer cannot lock in a ₹1 (or free) purchase.
+    if (!Number.isFinite(offerPrice) || offerPrice < 10) {
+      throw new AppError('Offer amount must be at least ₹10', 400, 'INVALID_OFFER_PRICE');
+    }
+
     if (listing.minimumOfferPrice && offerPrice < listing.minimumOfferPrice) {
       throw new AppError(`Offer amount must be at least ₹${listing.minimumOfferPrice}`);
     }
@@ -116,6 +122,20 @@ export class OfferService {
     // Verify authorized user (must be buyer or seller)
     if (userId !== offer.sellerId && userId !== offer.buyerId) {
       throw new ForbiddenError('Not authorized to respond to this offer');
+    }
+
+    // A counter offer is a binding price the other side can accept as-is — it
+    // must be a sane, positive amount (and respect the seller's floor).
+    if (!Number.isFinite(counterPrice) || counterPrice < 10) {
+      throw new AppError('Counter offer must be at least ₹10', 400, 'INVALID_COUNTER_PRICE');
+    }
+
+    if (offer.listing?.minimumOfferPrice && counterPrice < offer.listing.minimumOfferPrice) {
+      throw new AppError(
+        `Counter offer must be at least ₹${offer.listing.minimumOfferPrice}`,
+        400,
+        'INVALID_COUNTER_PRICE'
+      );
     }
 
     const nextRecipient = userId === offer.sellerId ? offer.buyerId : offer.sellerId;

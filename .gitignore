@@ -27,3 +27,24 @@ npm-debug.log*
 # OS
 .DS_Store
 Thumbs.db
+
+# TypeScript build info
+*.tsbuildinfo
+
+# IDE / editor
+.idea/
+.vscode/
+*.swp
+
+# Vercel CLI cache
+.vercel/
+
+# Test reports & coverage
+coverage/
+test-results/
+playwright-report/
+blob-report/
+
+# Throwaway end-to-end test artifacts (browser profiles & one-off scripts)
+.e2e-profile/
+.e2e-*.mjs
