@@ -210,6 +210,25 @@ export class OfferService {
 
     this.validatePrice(counterPrice, offer.listing.minimumOfferPrice, 'counter');
 
+    // Price-direction rules: a counter must move the negotiation toward
+    // agreement. The seller countering the buyer's offer must go HIGHER; the
+    // buyer countering the seller's counter must go LOWER. Equal means "agree"
+    // — which is an accept, not a counter.
+    if (userId === offer.sellerId && counterPrice <= offer.currentPrice) {
+      throw new AppError(
+        'Counter offer must be higher than the buyer\'s current offer of ₹' + offer.currentPrice,
+        400,
+        'COUNTER_MUST_EXCEED_OFFER'
+      );
+    }
+    if (userId === offer.buyerId && counterPrice >= offer.currentPrice) {
+      throw new AppError(
+        'Counter offer must be lower than the seller\'s current counter of ₹' + offer.currentPrice,
+        400,
+        'COUNTER_MUST_BE_BELOW_COUNTER'
+      );
+    }
+
     const nextRecipient = currentTurnUserId;
 
     // Reset expiry for counter-offer (48 hours)

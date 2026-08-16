@@ -24,7 +24,13 @@ export const OfferDetails: React.FC = () => {
     api.get(`/offers/${id}`)
       .then((res: any) => {
         setOffer(res.data);
-        setCounterPrice(res.data.currentPrice);
+        // Prefill the counter toward agreement: the seller must counter HIGHER
+        // than the buyer's offer; the buyer must counter LOWER than the seller's.
+        const isViewerSeller = user?.id === res.data.sellerId;
+        const min = res.data.listing?.minimumOfferPrice || 10;
+        setCounterPrice(
+          isViewerSeller ? res.data.currentPrice + 1 : Math.max(res.data.currentPrice - 1, min)
+        );
       })
       .catch((err) => setError(err.message || 'Failed to load offer'))
       .finally(() => setLoading(false));
@@ -90,6 +96,12 @@ export const OfferDetails: React.FC = () => {
   const canCounter =
     (isSeller && offer.status === 'PENDING') || (isBuyer && offer.status === 'COUNTERED');
   const isWaitingOnOther = !canAccept && !canReject && !canCounter;
+
+  // Price-direction bounds: the seller counters HIGHER than the buyer's offer;
+  // the buyer counters LOWER than the seller's counter (but never below the
+  // seller's minimum). The backend enforces these too.
+  const counterMin = isSeller ? offer.currentPrice + 1 : offer.listing?.minimumOfferPrice || 10;
+  const counterMax = isBuyer ? offer.currentPrice - 1 : undefined;
 
   const handleCounter = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -344,7 +356,8 @@ export const OfferDetails: React.FC = () => {
                   <div className="flex gap-3">
                     <input
                       type="number"
-                      min={10}
+                      min={counterMin}
+                      max={counterMax}
                       value={counterPrice}
                       onChange={(e) => setCounterPrice(Number(e.target.value))}
                       className="w-32 px-3 py-2 text-xs font-bold rounded-xl bg-slate-100 dark:bg-obsidian border border-slate-300 dark:border-slate-800 text-slate-900 dark:text-ivory focus:outline-none focus:border-gold"
@@ -365,6 +378,11 @@ export const OfferDetails: React.FC = () => {
                       <span>Counter</span>
                     </button>
                   </div>
+                  <p className="text-[11px] text-slate-400">
+                    {isSeller
+                      ? `Counter must be higher than the buyer's offer of ₹${offer.currentPrice}`
+                      : `Counter must be between ₹${counterMin} and ₹${offer.currentPrice - 1}`}
+                  </p>
                 </form>
               )}
             </>

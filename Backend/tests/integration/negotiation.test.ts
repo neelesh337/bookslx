@@ -263,6 +263,63 @@ describe('negotiation state machine', () => {
     });
   });
 
+  describe('price direction (counters must move toward agreement)', () => {
+    it('seller counter must be strictly higher than the buyer\'s offer', async () => {
+      const { offer } = await makePendingOffer(350); // buyer ₹350
+
+      // Equal is not a counter — it would be an acceptance.
+      for (const price of [350, 300, 250]) {
+        const err: any = await offerService.counterOffer(seller.id, offer.id, price).catch((e) => e);
+        expect(err).toBeInstanceOf(AppError);
+        expect(err.code).toBe('COUNTER_MUST_EXCEED_OFFER');
+      }
+      expect((await prisma.offer.findUnique({ where: { id: offer.id } }))?.currentPrice).toBe(350);
+
+      const okCounter: any = await offerService.counterOffer(seller.id, offer.id, 351);
+      expect(okCounter.currentPrice).toBe(351);
+    });
+
+    it('buyer counter must be strictly lower than the seller\'s counter', async () => {
+      const { offer } = await makePendingOffer(350);
+      await offerService.counterOffer(seller.id, offer.id, 450); // seller ₹450
+
+      for (const price of [450, 500]) {
+        const err: any = await offerService.counterOffer(buyer.id, offer.id, price).catch((e) => e);
+        expect(err).toBeInstanceOf(AppError);
+        expect(err.code).toBe('COUNTER_MUST_BE_BELOW_COUNTER');
+      }
+
+      const okCounter: any = await offerService.counterOffer(buyer.id, offer.id, 449);
+      expect(okCounter.currentPrice).toBe(449);
+    });
+
+    it('negotiation can repeat until both sides agree (multi-round countering)', async () => {
+      const { offer } = await makePendingOffer(300); // buyer ₹300 (min)
+      await offerService.counterOffer(seller.id, offer.id, 400); // seller ₹400
+      await offerService.counterOffer(buyer.id, offer.id, 320); // buyer ₹320
+      await offerService.counterOffer(seller.id, offer.id, 360); // seller ₹360
+      await offerService.counterOffer(buyer.id, offer.id, 340); // buyer ₹340
+      const result: any = await offerService.acceptOffer(seller.id, offer.id); // seller accepts ₹340
+
+      expect(result.offer.status).toBe('ACCEPTED');
+      expect(result.order.bookPrice).toBe(340);
+
+      const histories = await prisma.offerHistory.findMany({
+        where: { offerId: offer.id },
+        orderBy: { createdAt: 'asc' },
+      });
+      expect(histories.map((h) => h.action)).toEqual([
+        'OFFER_CREATED',
+        'COUNTER_OFFER',
+        'COUNTER_OFFER',
+        'COUNTER_OFFER',
+        'COUNTER_OFFER',
+        'ACCEPTED',
+      ]);
+      expect(histories.map((h) => h.price)).toEqual([300, 400, 320, 360, 340, 340]);
+    });
+  });
+
   describe('golden path (spec §39)', () => {
     it('offer → counter → counter → counter → accept → order at the accepted price', async () => {
       const { listing } = await makeListing();

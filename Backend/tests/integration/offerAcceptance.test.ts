@@ -208,10 +208,12 @@ describe('offer acceptance -> order creation', () => {
       expect(err.code).toBe('OFFER_BELOW_MINIMUM_PRICE');
     });
 
-    it('still allows a legitimate counter offer of ₹10+', async () => {
+    it('still allows a legitimate counter offer of ₹10+ (above the buyer offer)', async () => {
       const { offer } = await makeListingWithOffer();
-      const result: any = await offerService.counterOffer(seller.id, offer.id, 120);
-      expect(result.currentPrice).toBe(120);
+      // ₹160 is above the ₹10 floor AND above the buyer's ₹150 offer, so it
+      // satisfies both the minimum-price rule and the price-direction rule.
+      const result: any = await offerService.counterOffer(seller.id, offer.id, 160);
+      expect(result.currentPrice).toBe(160);
       expect(result.status).toBe('COUNTERED');
     });
   });
