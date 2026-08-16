@@ -91,6 +91,99 @@ export class AuthService {
   }
 
   /**
+   * Completes a Google sign-in. The frontend has already obtained the Google
+   * identity via Firebase (`signInWithPopup`) and passes the verified profile
+   * here. Three cases:
+   *
+   * 1. The `firebaseUid` is already linked to a local account — log in.
+   * 2. The email matches a local account without a Firebase UID (legacy /
+   *    backend-only signup) — link the Google identity and log in. Google has
+   *    verified the email, so the account also becomes verified.
+   * 3. No local account — create one (email is Google-verified, so no
+   *    email-verification step is needed) and log in.
+   */
+  async googleLogin(data: {
+    firebaseUid: string;
+    email: string;
+    name?: string;
+    profileImage?: string;
+  }) {
+    if (!data.firebaseUid || !data.email) {
+      throw new AppError('Missing required fields for Google sign-in', 400, 'INVALID_GOOGLE_PAYLOAD');
+    }
+    const email = data.email.toLowerCase();
+    const name = data.name && data.name.trim() ? data.name.trim() : undefined;
+    const profileImage = data.profileImage || undefined;
+
+    // Case 1: the Google identity is already linked to a local account.
+    let user = await prisma.user.findUnique({ where: { firebaseUid: data.firebaseUid } });
+    if (user) {
+      const updated = await prisma.user.update({
+        where: { id: user.id },
+        data: {
+          name: name || user.name,
+          profileImage: profileImage || user.profileImage,
+          emailVerified: true,
+          verifiedAt: user.verifiedAt || new Date(),
+        },
+      });
+
+      return {
+        user: this.serializeUser(updated),
+        token: this.generateToken(updated.id, updated.name, updated.email, updated.role as Role),
+      };
+    }
+
+    // Case 2: the email exists but belongs to a different Firebase account.
+    user = await prisma.user.findUnique({ where: { email } });
+    if (user && user.firebaseUid && user.firebaseUid !== data.firebaseUid) {
+      throw new ConflictError(
+        'An account with this email already exists. Please sign in with your email and password.',
+        'EMAIL_IN_USE'
+      );
+    }
+
+    // Case 2b: legacy / backend-only account — link the Google identity.
+    if (user) {
+      const updated = await prisma.user.update({
+        where: { id: user.id },
+        data: {
+          firebaseUid: data.firebaseUid,
+          name: name || user.name,
+          profileImage: profileImage || user.profileImage,
+          emailVerified: true,
+          verifiedAt: new Date(),
+        },
+      });
+
+      return {
+        user: this.serializeUser(updated),
+        token: this.generateToken(updated.id, updated.name, updated.email, updated.role as Role),
+      };
+    }
+
+    // Case 3: brand-new Google user — create a verified account. The password
+    // column gets an unguessable placeholder hash so it is never null.
+    const passwordHash = await bcrypt.hash(crypto.randomBytes(32).toString('hex'), 10);
+    const created = await prisma.user.create({
+      data: {
+        name: name || email.split('@')[0] || 'User',
+        email,
+        passwordHash,
+        profileImage: profileImage || null,
+        firebaseUid: data.firebaseUid,
+        emailVerified: true,
+        verifiedAt: new Date(),
+      },
+    });
+
+    return {
+      user: this.serializeUser(created),
+      token: this.generateToken(created.id, created.name, created.email, created.role as Role),
+    };
+  }
+
+  /**
    * Completes the Firebase email-verification login. Called by the frontend after
    * `applyActionCode` succeeds. Marks the account verified and issues a token.
    */

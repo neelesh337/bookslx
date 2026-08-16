@@ -53,9 +53,16 @@ api.interceptors.response.use(
     const code = error.response?.data?.code || 'UNKNOWN_ERROR';
     const status = error.response?.status;
 
-    // Handle 401 Unauthorized - clear token
+    // Handle 401 Unauthorized — clear the token ONLY when the rejected request
+    // actually carried one. A 401 on an unauthenticated request (e.g. /auth/me
+    // fired at page load before login) is normal, and blindly clearing the token
+    // here can wipe a valid token that a concurrent login just stored — leaving
+    // the user logged out with broken APIs after the next refresh.
     if (status === 401) {
-      localStorage.removeItem('token');
+      const hadAuthHeader = !!(error.config?.headers?.Authorization);
+      if (hadAuthHeader) {
+        localStorage.removeItem('token');
+      }
       localStorage.removeItem('pendingVerificationEmail');
     }
 

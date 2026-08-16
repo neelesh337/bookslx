@@ -8,7 +8,9 @@ import { auth } from '../config/firebase';import {
   signOut,
   sendPasswordResetEmail,
   confirmPasswordReset,
-  signInWithEmailAndPassword
+  signInWithEmailAndPassword,
+  GoogleAuthProvider,
+  signInWithPopup
 } from 'firebase/auth';
 
 export interface User {
@@ -30,6 +32,7 @@ interface AuthContextType {
   loading: boolean;
   pendingVerificationEmail: string | null;
   login: (email: string, password: string) => Promise<void>;
+  loginWithGoogle: () => Promise<void>;
   register: (data: any) => Promise<void>;
   logout: () => Promise<void>;
   refreshUser: () => Promise<void>;
@@ -78,12 +81,19 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const [pendingVerificationEmail, setPendingVerificationEmail] = useState<string | null>(null);
 
   const fetchCurrentUser = async () => {
+    // Snapshot whether a token existed before the request. If /auth/me 401s but
+    // the request was sent WITHOUT a token, the session isn't necessarily dead
+    // — a valid token may have been stored concurrently (e.g. login in another
+    // tab) — so we must not delete it.
+    const hadToken = !!localStorage.getItem('token');
     try {
       const res: any = await api.get('/auth/me');
       setUser(res.data);
     } catch (err) {
       setUser(null);
-      localStorage.removeItem('token');
+      if (hadToken) {
+        localStorage.removeItem('token');
+      }
     } finally {
       setLoading(false);
     }
@@ -98,6 +108,30 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       setPendingVerificationEmail(pending);
     }
   }, []);
+
+  const loginWithGoogle = async () => {
+    if (!auth) {
+      throw new Error('Firebase is not configured.');
+    }
+
+    const provider = new GoogleAuthProvider();
+    const result = await signInWithPopup(auth, provider);
+    const firebaseUser = result.user;
+
+    // Google has already verified the email. The backend either finds the local
+    // account (by firebaseUid, or by email for legacy accounts) or creates one.
+    const res: any = await api.post('/auth/google', {
+      firebaseUid: firebaseUser.uid,
+      email: firebaseUser.email,
+      name: firebaseUser.displayName || undefined,
+      profileImage: firebaseUser.photoURL || undefined,
+    });
+
+    if (res.data?.token) {
+      localStorage.setItem('token', res.data.token);
+    }
+    setUser(res.data?.user);
+  };
 
   const login = async (email: string, password: string) => {
     try {
@@ -245,22 +279,43 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
       await applyActionCode(auth, code);
 
-      const uid = localStorage.getItem(PENDING_UID_KEY);
+      // The stored UID (saved at signup/resend) is the primary source. Fall back
+      // to the current Firebase session's UID when it belongs to the verified
+      // email — this keeps auto-login working even if the stored UID was lost
+      // (e.g., cleared by a logout in another tab). Never use a session that
+      // belongs to a different account.
+      const currentFirebaseUser = auth.currentUser;
+      const uid =
+        localStorage.getItem(PENDING_UID_KEY) ||
+        (currentFirebaseUser && currentFirebaseUser.email === email
+          ? currentFirebaseUser.uid
+          : null);
 
       if (email && uid) {
-        const loginRes: any = await api.post('/auth/login-verified', {
-          email,
-          firebaseUid: uid,
-        });
+        try {
+          const loginRes: any = await api.post('/auth/login-verified', {
+            email,
+            firebaseUid: uid,
+          });
 
-        if (loginRes.data?.token) {
-          localStorage.setItem('token', loginRes.data.token);
+          if (loginRes.data?.token) {
+            localStorage.setItem('token', loginRes.data.token);
+          }
+
+          setUser(loginRes.data?.user);
+          localStorage.removeItem(PENDING_EMAIL_KEY);
+          localStorage.removeItem(PENDING_UID_KEY);
+          setPendingVerificationEmail(null);
+        } catch (loginErr) {
+          // The email IS verified in Firebase at this point, but the local login
+          // could not be completed (e.g., the backend account has no matching
+          // Firebase UID or a transient failure). Don't leave the user on a dead
+          // error screen — the login flow detects the verified account and
+          // finishes the job.
+          localStorage.setItem(PENDING_EMAIL_KEY, email);
+          setPendingVerificationEmail(email);
+          throw new VerificationCompleteError(email);
         }
-
-        setUser(loginRes.data?.user);
-        localStorage.removeItem(PENDING_EMAIL_KEY);
-        localStorage.removeItem(PENDING_UID_KEY);
-        setPendingVerificationEmail(null);
       } else if (email) {
         // Firebase confirmed the email, but the Firebase UID isn't available here
         // (link opened on a new device). The user can now sign in — the login
@@ -404,6 +459,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         loading,
         pendingVerificationEmail,
         login,
+        loginWithGoogle,
         register,
         logout,
         refreshUser: fetchCurrentUser,

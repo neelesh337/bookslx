@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { useAuth, VerificationCompleteError } from '../context/AuthContext';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { Mail, Loader, CheckCircle, AlertCircle, ArrowLeft } from 'lucide-react';
@@ -7,6 +7,11 @@ export const EmailVerificationPage: React.FC = () => {
   const { verifyEmail, resendVerificationEmail, pendingVerificationEmail } = useAuth();
   const [searchParams] = useSearchParams();
   const navigate = useNavigate();
+  // Guards against the action code being applied twice (React StrictMode mounts
+  // effects twice in dev, and the user could also double-navigate to the link).
+  // A second applyActionCode with the same code fails with invalid-action-code,
+  // which would wrongly show an 'expired link' error after a successful verify.
+  const verificationStartedRef = useRef(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const [success, setSuccess] = useState(false);
@@ -18,7 +23,8 @@ export const EmailVerificationPage: React.FC = () => {
   const verificationCode = searchParams.get('oobCode');
 
   useEffect(() => {
-    if (verificationCode) {
+    if (verificationCode && !verificationStartedRef.current) {
+      verificationStartedRef.current = true;
       handleVerifyFromLink();
     }
   }, [verificationCode]);

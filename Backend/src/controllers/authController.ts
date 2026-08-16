@@ -29,6 +29,28 @@ export class AuthController {
     }
   }
 
+  async googleLogin(req: Request, res: Response, next: NextFunction) {
+    try {
+      const { firebaseUid, email, name, profileImage } = req.body;
+      const result = await authService.googleLogin({ firebaseUid, email, name, profileImage });
+
+      res.cookie('token', result.token, {
+        httpOnly: true,
+        secure: false,
+        sameSite: 'lax',
+        maxAge: 7 * 24 * 60 * 60 * 1000,
+      });
+
+      return res.json({
+        success: true,
+        message: 'Logged in with Google successfully',
+        data: result,
+      });
+    } catch (error) {
+      next(error);
+    }
+  }
+
   async loginVerified(req: Request, res: Response, next: NextFunction) {
     try {
       const { email, firebaseUid } = req.body;

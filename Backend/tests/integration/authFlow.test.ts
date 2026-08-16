@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach, afterAll } from 'vitest';
 import bcrypt from 'bcryptjs';
 import { prisma } from '../../src/config/db';
 import { authService } from '../../src/services/authService';
-import { ConflictError, ForbiddenError, NotFoundError, UnauthorizedError } from '../../src/utils/errors';
+import { AppError, ConflictError, ForbiddenError, NotFoundError, UnauthorizedError } from '../../src/utils/errors';
 import { truncateAll, uid } from '../helpers';
 
 const PASSWORD = 'secret123';
@@ -185,6 +185,101 @@ describe('Auth registration & Firebase email verification', () => {
       const saved = await prisma.user.findUnique({ where: { email: 'dave@test.local' } });
       expect(saved?.firebaseUid).toBe(FIREBASE_UID);
       expect(saved?.emailVerified).toBe(true);
+    });
+  });
+
+  describe('googleLogin', () => {
+    it('creates a new verified account with a token for a brand-new Google user', async () => {
+      const result: any = await authService.googleLogin({
+        firebaseUid: 'GOOGLE_UID_1',
+        email: 'gina@test.local',
+        name: 'Gina',
+        profileImage: 'https://example.com/gina.jpg',
+      });
+
+      expect(result.token).toBeTruthy();
+      expect(result.user.emailVerified).toBe(true);
+      expect(result.user.name).toBe('Gina');
+      expect(result.user.profileImage).toBe('https://example.com/gina.jpg');
+
+      const saved = await prisma.user.findUnique({ where: { email: 'gina@test.local' } });
+      expect(saved?.firebaseUid).toBe('GOOGLE_UID_1');
+      expect(saved?.emailVerified).toBe(true);
+      expect(saved?.verifiedAt).toBeTruthy();
+
+      // No password was set — password login must fail.
+      await expect(
+        authService.login({ email: 'gina@test.local', password: PASSWORD })
+      ).rejects.toThrow(UnauthorizedError);
+    });
+
+    it('logs in when the Google identity is already linked', async () => {
+      await authService.googleLogin({
+        firebaseUid: 'GOOGLE_UID_2',
+        email: 'george@test.local',
+        name: 'George',
+      });
+
+      const result: any = await authService.googleLogin({
+        firebaseUid: 'GOOGLE_UID_2',
+        email: 'george@test.local',
+        name: 'George Updated',
+        profileImage: 'https://example.com/george.jpg',
+      });
+
+      expect(result.token).toBeTruthy();
+      expect(result.user.name).toBe('George Updated');
+      expect(result.user.profileImage).toBe('https://example.com/george.jpg');
+    });
+
+    it('links a legacy (no firebaseUid) account by email and verifies it', async () => {
+      await authService.register({ name: 'Harry', email: 'harry@test.local', password: PASSWORD });
+
+      const result: any = await authService.googleLogin({
+        firebaseUid: 'GOOGLE_UID_3',
+        email: 'harry@test.local',
+        name: 'Harry',
+      });
+
+      expect(result.token).toBeTruthy();
+      const saved = await prisma.user.findUnique({ where: { email: 'harry@test.local' } });
+      expect(saved?.firebaseUid).toBe('GOOGLE_UID_3');
+      expect(saved?.emailVerified).toBe(true);
+      expect(saved?.verifiedAt).toBeTruthy();
+
+      // Password login still works for the linked account.
+      await expect(
+        authService.login({ email: 'harry@test.local', password: PASSWORD })
+      ).resolves.toBeTruthy();
+    });
+
+    it('rejects when the email belongs to a different Firebase account', async () => {
+      await authService.register({
+        name: 'Ivy',
+        email: 'ivy@test.local',
+        password: PASSWORD,
+        firebaseUid: FIREBASE_UID,
+      });
+
+      const err: any = await authService
+        .googleLogin({ firebaseUid: 'GOOGLE_UID_4', email: 'ivy@test.local', name: 'Ivy' })
+        .catch((e) => e);
+      expect(err).toBeInstanceOf(ConflictError);
+      expect(err.code).toBe('EMAIL_IN_USE');
+    });
+
+    it('rejects missing firebaseUid or email', async () => {
+      const err1: any = await authService
+        .googleLogin({ firebaseUid: '', email: 'x@test.local' })
+        .catch((e) => e);
+      expect(err1).toBeInstanceOf(AppError);
+      expect(err1.code).toBe('INVALID_GOOGLE_PAYLOAD');
+
+      const err2: any = await authService
+        .googleLogin({ firebaseUid: 'GOOGLE_UID_5', email: '' })
+        .catch((e) => e);
+      expect(err2).toBeInstanceOf(AppError);
+      expect(err2.code).toBe('INVALID_GOOGLE_PAYLOAD');
     });
   });
 });
