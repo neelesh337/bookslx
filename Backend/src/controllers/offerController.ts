@@ -48,6 +48,35 @@ export class OfferController {
     }
   }
 
+  async cancelOffer(req: Request, res: Response, next: NextFunction) {
+    try {
+      const userId = req.user!.id;
+      const { id } = req.params;
+      const offer = await offerService.cancelOffer(userId, id);
+      return res.json({
+        success: true,
+        message: 'Offer withdrawn',
+        data: offer,
+      });
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  async getListingOffers(req: Request, res: Response, next: NextFunction) {
+    try {
+      const userId = req.user!.id;
+      const { listingId } = req.params;
+      const offers = await offerService.getOffersForListing(userId, listingId);
+      return res.json({
+        success: true,
+        data: offers,
+      });
+    } catch (error) {
+      next(error);
+    }
+  }
+
   async rejectOffer(req: Request, res: Response, next: NextFunction) {
     try {
       const userId = req.user!.id;

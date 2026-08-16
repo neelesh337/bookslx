@@ -137,7 +137,7 @@ describe('offer acceptance -> order creation', () => {
 
     const err: any = await offerService.acceptOffer(seller.id, offer.id).catch((e) => e);
     expect(err).toBeInstanceOf(ForbiddenError);
-    expect(err.code).toBe('CANNOT_ACCEPT_OWN_COUNTER');
+    expect(err.code).toBe('CANNOT_ACCEPT_OWN_OFFER');
   });
 
   describe('offer price validation (no ₹1 purchases)', () => {
@@ -173,7 +173,9 @@ describe('offer acceptance -> order creation', () => {
 
     it('rejects a counter offer below the ₹10 floor (the ₹1 exploit)', async () => {
       const { offer } = await makeListingWithOffer();
-      const err: any = await offerService.counterOffer(buyer.id, offer.id, 1).catch((e) => e);
+      // The seller holds the turn after the buyer's offer — a ₹1 counter from
+      // the seller must be rejected server-side.
+      const err: any = await offerService.counterOffer(seller.id, offer.id, 1).catch((e) => e);
       expect(err).toBeInstanceOf(AppError);
       expect(err.code).toBe('INVALID_COUNTER_PRICE');
       // The agreed price must be untouched — no ₹1 order can be created.
@@ -200,14 +202,15 @@ describe('offer acceptance -> order creation', () => {
           expiresAt,
         },
       });
-      const err: any = await offerService.counterOffer(buyer.id, offer.id, 40).catch((e) => e);
+      const err: any = await offerService.counterOffer(seller.id, offer.id, 40).catch((e) => e);
       expect(err).toBeInstanceOf(AppError);
-      expect(err.code).toBe('INVALID_COUNTER_PRICE');
+      // 40 >= ₹10 floor but below the seller's minimum → the spec's dedicated code.
+      expect(err.code).toBe('OFFER_BELOW_MINIMUM_PRICE');
     });
 
     it('still allows a legitimate counter offer of ₹10+', async () => {
       const { offer } = await makeListingWithOffer();
-      const result: any = await offerService.counterOffer(buyer.id, offer.id, 120);
+      const result: any = await offerService.counterOffer(seller.id, offer.id, 120);
       expect(result.currentPrice).toBe(120);
       expect(result.status).toBe('COUNTERED');
     });

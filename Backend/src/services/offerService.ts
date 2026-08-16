@@ -2,7 +2,83 @@ import { prisma } from '../config/db';
 import { AppError, ForbiddenError, NotFoundError } from '../utils/errors';
 import { calculateOrderAmount } from '../utils/pricing';
 
+/**
+ * BooksLX negotiation engine.
+ *
+ * Model: the party who proposed the CURRENT price cannot respond to it — the
+ * OTHER party holds the turn. Who proposed the current price is derived from
+ * the last entry of the immutable `histories` log:
+ *
+ *   - PENDING   → last action is OFFER_CREATED by the buyer → turn = seller
+ *   - COUNTERED → last action is COUNTER_OFFER by the proposer → turn = other
+ *
+ * The backend is the only source of truth for turns, expiry, prices, and
+ * availability. The frontend merely renders this state.
+ */
 export class OfferService {
+  /**
+   * Derives the negotiation turn from the immutable history. The proposer of
+   * the CURRENT price is the sender of the last PROPOSAL entry (OFFER_CREATED
+   * or COUNTER_OFFER). Resolution entries (ACCEPTED / REJECTED / CANCELLED /
+   * EXPIRED) never change who proposed the price.
+   */
+  private deriveTurn(histories: any[], buyerId: string, sellerId: string) {
+    const lastProposal = [...histories]
+      .reverse()
+      .find((h) => h.action === 'OFFER_CREATED' || h.action === 'COUNTER_OFFER');
+    const currentOfferSenderId = lastProposal?.senderId ?? buyerId;
+    const currentTurnUserId = currentOfferSenderId === buyerId ? sellerId : buyerId;
+    return { currentOfferSenderId, currentTurnUserId };
+  }
+
+  /**
+   * Reads the offer with its history and derives the negotiation turn:
+   * `currentOfferSenderId` (who proposed the current price) and
+   * `currentTurnUserId` (who must respond next).
+   */
+  private async getActiveOfferForResponse(offerId: string) {
+    const offer = await prisma.offer.findUnique({
+      where: { id: offerId },
+      include: {
+        listing: { include: { book: true } },
+        histories: { orderBy: { createdAt: 'asc' } },
+      },
+    });
+
+    if (!offer) throw new NotFoundError('Offer not found');
+
+    const { currentOfferSenderId, currentTurnUserId } = this.deriveTurn(offer.histories, offer.buyerId, offer.sellerId);
+    return { offer, currentOfferSenderId, currentTurnUserId };
+  }
+
+  private assertActiveStatus(status: string) {
+    if (status !== 'PENDING' && status !== 'COUNTERED') {
+      throw new AppError('This negotiation has already been resolved', 409, 'OFFER_ALREADY_RESOLVED');
+    }
+  }
+
+  private assertNotExpired(expiresAt: Date) {
+    if (new Date() > expiresAt) {
+      throw new AppError('Offer has expired', 400, 'OFFER_EXPIRED');
+    }
+  }
+
+  private validatePrice(price: number, minimumOfferPrice: number | null | undefined, kind: 'offer' | 'counter') {
+    const code = kind === 'offer' ? 'INVALID_OFFER_PRICE' : 'INVALID_COUNTER_PRICE';
+    const label = kind === 'offer' ? 'Offer' : 'Counter offer';
+
+    if (!Number.isFinite(price) || price < 10) {
+      throw new AppError(`${label} amount must be at least ₹10`, 400, code);
+    }
+    if (minimumOfferPrice && price < minimumOfferPrice) {
+      throw new AppError(
+        `${label} amount must be at least ₹${minimumOfferPrice}`,
+        400,
+        'OFFER_BELOW_MINIMUM_PRICE'
+      );
+    }
+  }
+
   async createOffer(buyerId: string, listingId: string, offerPrice: number, message?: string) {
     const listing = await prisma.listing.findUnique({
       where: { id: listingId },
@@ -20,15 +96,7 @@ export class OfferService {
       throw new AppError(`Listing is currently ${listing.status} and unavailable for offers`);
     }
 
-    // Never trust the client with the price: reject non-numeric, zero, and
-    // absurdly low amounts so a buyer cannot lock in a ₹1 (or free) purchase.
-    if (!Number.isFinite(offerPrice) || offerPrice < 10) {
-      throw new AppError('Offer amount must be at least ₹10', 400, 'INVALID_OFFER_PRICE');
-    }
-
-    if (listing.minimumOfferPrice && offerPrice < listing.minimumOfferPrice) {
-      throw new AppError(`Offer amount must be at least ₹${listing.minimumOfferPrice}`);
-    }
+    this.validatePrice(offerPrice, listing.minimumOfferPrice, 'offer');
 
     // Default offer expiry: 48 hours
     const expiresAt = new Date();
@@ -46,6 +114,21 @@ export class OfferService {
     let offer;
 
     if (existingOffer) {
+      // The buyer may revise their own outstanding proposal (the seller has not
+      // responded yet), but only if they are still the one awaiting a response.
+      const last = (
+        await prisma.offerHistory.findFirst({
+          where: { offerId: existingOffer.id },
+          orderBy: { createdAt: 'desc' },
+        })
+      )?.senderId;
+      if (last && last !== buyerId) {
+        throw new ForbiddenError(
+          'It is not your turn — wait for the other party to respond',
+          'NOT_YOUR_TURN'
+        );
+      }
+
       // Update existing offer and append history
       offer = await prisma.offer.update({
         where: { id: existingOffer.id },
@@ -102,43 +185,32 @@ export class OfferService {
   }
 
   async counterOffer(userId: string, offerId: string, counterPrice: number, message?: string) {
-    const offer = await prisma.offer.findUnique({
-      where: { id: offerId },
-      include: { listing: { include: { book: true } } },
-    });
+    const { offer, currentOfferSenderId, currentTurnUserId } = await this.getActiveOfferForResponse(offerId);
 
-    if (!offer) throw new NotFoundError('Offer not found');
+    this.assertActiveStatus(offer.status);
+    this.assertNotExpired(offer.expiresAt);
 
-    if (offer.status !== 'PENDING' && offer.status !== 'COUNTERED') {
-      throw new AppError('Can only counter active offers');
-    }
-
-    // Server-side expiry check
-    if (new Date() > offer.expiresAt) {
-      await prisma.offer.update({ where: { id: offerId }, data: { status: 'EXPIRED' } });
-      throw new AppError('Offer has expired', 400, 'OFFER_EXPIRED');
-    }
-
-    // Verify authorized user (must be buyer or seller)
+    // Only the buyer or seller may respond.
     if (userId !== offer.sellerId && userId !== offer.buyerId) {
       throw new ForbiddenError('Not authorized to respond to this offer');
     }
 
-    // A counter offer is a binding price the other side can accept as-is — it
-    // must be a sane, positive amount (and respect the seller's floor).
-    if (!Number.isFinite(counterPrice) || counterPrice < 10) {
-      throw new AppError('Counter offer must be at least ₹10', 400, 'INVALID_COUNTER_PRICE');
-    }
-
-    if (offer.listing?.minimumOfferPrice && counterPrice < offer.listing.minimumOfferPrice) {
-      throw new AppError(
-        `Counter offer must be at least ₹${offer.listing.minimumOfferPrice}`,
-        400,
-        'INVALID_COUNTER_PRICE'
+    // Turn enforcement: the party who proposed the current price cannot counter
+    // it — that would be a double move (e.g. buyer counters their own offer, or
+    // seller counters their own counter).
+    if (userId === currentOfferSenderId) {
+      throw new ForbiddenError(
+        'You cannot counter your own offer — wait for the other party to respond',
+        'CANNOT_COUNTER_OWN_OFFER'
       );
     }
+    if (userId !== currentTurnUserId) {
+      throw new ForbiddenError('It is not your turn', 'NOT_YOUR_TURN');
+    }
 
-    const nextRecipient = userId === offer.sellerId ? offer.buyerId : offer.sellerId;
+    this.validatePrice(counterPrice, offer.listing.minimumOfferPrice, 'counter');
+
+    const nextRecipient = currentTurnUserId;
 
     // Reset expiry for counter-offer (48 hours)
     const newExpiresAt = new Date();
@@ -184,6 +256,7 @@ export class OfferService {
           listing: { include: { book: true } },
           buyer: { include: { addresses: true } },
           seller: { include: { addresses: true } },
+          histories: { orderBy: { createdAt: 'asc' } },
         },
       });
 
@@ -194,39 +267,36 @@ export class OfferService {
         throw new ForbiddenError('Not authorized to accept this offer');
       }
 
-      // A seller accepts the buyer's PENDING offer and a buyer accepts the
-      // seller's COUNTER offer. Accepting your own offer — or your own counter —
-      // would force a sale without the other side's agreement, so it is forbidden.
-      if (offer.status === 'PENDING' && userId === offer.buyerId) {
+      // 2. Derive the turn from the immutable history — the person who proposed
+      //    the current price can never accept it; only the other party can.
+      const { currentOfferSenderId, currentTurnUserId } = this.deriveTurn(offer.histories, offer.buyerId, offer.sellerId);
+
+      if (userId === currentOfferSenderId) {
         throw new ForbiddenError(
-          'You cannot accept your own offer — only the seller can accept it',
+          'You cannot accept your own offer — only the other party can accept it',
           'CANNOT_ACCEPT_OWN_OFFER'
         );
       }
-      if (offer.status === 'COUNTERED' && userId === offer.sellerId) {
-        throw new ForbiddenError(
-          'You cannot accept your own counter offer — only the buyer can accept it',
-          'CANNOT_ACCEPT_OWN_COUNTER'
-        );
+      if (userId !== currentTurnUserId) {
+        throw new ForbiddenError('It is not your turn to accept', 'NOT_YOUR_TURN');
       }
 
-      // 2. Expiry check
+      // 3. Expiry check
       if (new Date() > offer.expiresAt) {
         await tx.offer.update({ where: { id: offerId }, data: { status: 'EXPIRED' } });
         throw new AppError('Offer has expired', 400, 'OFFER_EXPIRED');
       }
 
-      // Only active offers can be accepted (a rejected offer cannot be revived).
-      if (offer.status !== 'PENDING' && offer.status !== 'COUNTERED') {
-        throw new AppError('Can only accept active offers');
-      }
+      // Only active offers can be accepted (a rejected/accepted/cancelled offer
+      // cannot be revived, and a duplicate accept must not create two orders).
+      this.assertActiveStatus(offer.status);
 
-      // 3. Verify listing is ACTIVE
+      // 4. Verify listing is ACTIVE
       if (offer.listing.status !== 'ACTIVE') {
         throw new AppError(`Listing is ${offer.listing.status} and cannot be purchased`);
       }
 
-      // 4. Update offer status to ACCEPTED and add immutable history
+      // 5. Update offer status to ACCEPTED and add immutable history
       const acceptedOffer = await tx.offer.update({
         where: { id: offerId },
         data: {
@@ -242,7 +312,7 @@ export class OfferService {
         },
       });
 
-      // 5. Reserve the listing (15 min reservation until payment completed)
+      // 6. Reserve the listing (15 min reservation until payment completed)
       const reservedUntil = new Date();
       reservedUntil.setMinutes(reservedUntil.getMinutes() + 15);
 
@@ -255,7 +325,16 @@ export class OfferService {
         },
       });
 
-      // 6. Expire all competing offers for this listing
+      // 7. Expire all competing offers for this listing and notify their buyers
+      const competing = await tx.offer.findMany({
+        where: {
+          listingId: offer.listingId,
+          id: { not: offerId },
+          status: { in: ['PENDING', 'COUNTERED'] },
+        },
+        select: { id: true, buyerId: true },
+      });
+
       await tx.offer.updateMany({
         where: {
           listingId: offer.listingId,
@@ -265,7 +344,19 @@ export class OfferService {
         data: { status: 'EXPIRED' },
       });
 
-      // 7. Extract delivery & pickup address snapshots
+      for (const other of competing) {
+        await tx.notification.create({
+          data: {
+            userId: other.buyerId,
+            type: 'LISTING_UNAVAILABLE',
+            title: 'Book No Longer Available',
+            message: `"${offer.listing.book.title}" is no longer available because another offer was accepted.`,
+            link: `/books/${offer.listingId}`,
+          },
+        });
+      }
+
+      // 8. Extract delivery & pickup address snapshots
       const defaultDeliveryAddr = offer.buyer.addresses.find((a) => a.isDefault) || offer.buyer.addresses[0] || {
         name: offer.buyer.name,
         phone: offer.buyer.phone || '9999999999',
@@ -286,12 +377,12 @@ export class OfferService {
         country: 'India',
       };
 
-      // Calculate snapshot pricing
+      // Calculate snapshot pricing from the ACCEPTED negotiation price.
       const pricing = calculateOrderAmount(offer.currentPrice);
 
       const orderNumber = `ORD-${Date.now()}-${Math.floor(1000 + Math.random() * 9000)}`;
 
-      // 8. Create Order snapshot
+      // 9. Create Order snapshot
       const order = await tx.order.create({
         data: {
           orderNumber,
@@ -336,14 +427,27 @@ export class OfferService {
   }
 
   async rejectOffer(userId: string, offerId: string) {
-    const offer = await prisma.offer.findUnique({ where: { id: offerId } });
-    if (!offer) throw new NotFoundError('Offer not found');
+    const { offer, currentOfferSenderId, currentTurnUserId } = await this.getActiveOfferForResponse(offerId);
+
+    this.assertActiveStatus(offer.status);
 
     if (userId !== offer.sellerId && userId !== offer.buyerId) {
       throw new ForbiddenError('Not authorized');
     }
 
-    return await prisma.offer.update({
+    // Turn enforcement: only the party who must respond can reject, and nobody
+    // can reject their own proposal (that is a cancel/withdraw, not a rejection).
+    if (userId === currentOfferSenderId) {
+      throw new ForbiddenError(
+        'You cannot reject your own offer — use cancel to withdraw it',
+        'CANNOT_REJECT_OWN_OFFER'
+      );
+    }
+    if (userId !== currentTurnUserId) {
+      throw new ForbiddenError('It is not your turn', 'NOT_YOUR_TURN');
+    }
+
+    const updated = await prisma.offer.update({
       where: { id: offerId },
       data: {
         status: 'REJECTED',
@@ -357,6 +461,66 @@ export class OfferService {
         },
       },
     });
+
+    await prisma.notification.create({
+      data: {
+        userId: currentOfferSenderId,
+        type: 'OFFER_REJECTED',
+        title: 'Offer Rejected',
+        message: `Your offer for "${offer.listing.book.title}" was rejected.`,
+        link: `/offers/${offer.id}`,
+      },
+    });
+
+    return updated;
+  }
+
+  /**
+   * The buyer withdraws their own outstanding proposal (PENDING offer, or their
+   * own counter that the seller has not answered yet). Ends the negotiation
+   * with CANCELLED — a distinct outcome from a rejection by the other party.
+   */
+  async cancelOffer(userId: string, offerId: string) {
+    const { offer, currentOfferSenderId } = await this.getActiveOfferForResponse(offerId);
+
+    this.assertActiveStatus(offer.status);
+
+    if (userId !== offer.buyerId) {
+      throw new ForbiddenError('Only the buyer can cancel their offer', 'CANNOT_CANCEL_OTHERS_OFFER');
+    }
+    if (userId !== currentOfferSenderId) {
+      throw new ForbiddenError(
+        'You cannot cancel a counter offer from the seller — respond to it instead',
+        'CANNOT_CANCEL_OTHERS_OFFER'
+      );
+    }
+
+    const updated = await prisma.offer.update({
+      where: { id: offerId },
+      data: {
+        status: 'CANCELLED',
+        histories: {
+          create: {
+            senderId: userId,
+            price: offer.currentPrice,
+            message: 'Offer withdrawn by buyer',
+            action: 'CANCELLED',
+          },
+        },
+      },
+    });
+
+    await prisma.notification.create({
+      data: {
+        userId: offer.sellerId,
+        type: 'OFFER_CANCELLED',
+        title: 'Offer Withdrawn',
+        message: `The buyer withdrew their offer for "${offer.listing.book.title}".`,
+        link: `/offers/${offer.id}`,
+      },
+    });
+
+    return updated;
   }
 
   /**
@@ -364,9 +528,6 @@ export class OfferService {
    * - 'seller' — offers received on the user's own books (incoming offers)
    * - 'buyer'  — offers the user has made on other sellers' books (outgoing)
    * - 'all'    — both, as a single feed
-   *
-   * Offers are sorted by amount, highest first, so sellers see the best price
-   * proposals on top (ties broken by most recently updated).
    */
   async getUserOffers(userId: string, roleType: 'buyer' | 'seller' | 'all' = 'all') {
     const where: any = {};
@@ -380,6 +541,24 @@ export class OfferService {
         listing: { include: { book: true, images: { where: { isPrimary: true } } } },
         buyer: { select: { id: true, name: true, rating: true } },
         seller: { select: { id: true, name: true, rating: true } },
+        histories: { orderBy: { createdAt: 'asc' } },
+      },
+      orderBy: [{ currentPrice: 'desc' }, { updatedAt: 'desc' }],
+    });
+  }
+
+  /** All offers for a single listing — sellers only (they own the listing). */
+  async getOffersForListing(userId: string, listingId: string) {
+    const listing = await prisma.listing.findUnique({ where: { id: listingId } });
+    if (!listing) throw new NotFoundError('Listing not found');
+    if (listing.sellerId !== userId) {
+      throw new ForbiddenError('Only the seller can view offers for this listing');
+    }
+
+    return await prisma.offer.findMany({
+      where: { listingId },
+      include: {
+        buyer: { select: { id: true, name: true, rating: true } },
         histories: { orderBy: { createdAt: 'asc' } },
       },
       orderBy: [{ currentPrice: 'desc' }, { updatedAt: 'desc' }],

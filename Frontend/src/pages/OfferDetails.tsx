@@ -16,6 +16,7 @@ export const OfferDetails: React.FC = () => {
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState('');
   const [successMsg, setSuccessMsg] = useState('');
+  const [now, setNow] = useState(Date.now());
 
   const fetchOffer = () => {
     if (!id) return;
@@ -32,6 +33,12 @@ export const OfferDetails: React.FC = () => {
   useEffect(() => {
     fetchOffer();
   }, [id]);
+
+  // Visual-only expiry countdown — the backend is the authority on expiry.
+  useEffect(() => {
+    const t = setInterval(() => setNow(Date.now()), 60_000);
+    return () => clearInterval(t);
+  }, []);
 
   if (loading) {
     return (
@@ -55,6 +62,23 @@ export const OfferDetails: React.FC = () => {
 
   const isSeller = user?.id === offer.sellerId;
   const isBuyer = user?.id === offer.buyerId;
+  const ACTIVE = offer.status === 'PENDING' || offer.status === 'COUNTERED';
+
+  // Who proposed the CURRENT price? (Mirrors the backend turn model — the
+  // proposer can never respond to their own price, only the other party can.)
+  const lastProposal = [...(offer.histories || [])]
+    .reverse()
+    .find((h: any) => h.action === 'OFFER_CREATED' || h.action === 'COUNTER_OFFER');
+  const proposedByMe = !!lastProposal && lastProposal.senderId === user?.id;
+  const myTurn = ACTIVE && !proposedByMe;
+  const otherPartyName = isSeller ? offer.buyer?.name : offer.seller?.name;
+
+  // Visual-only countdown. The backend rejects expired offers regardless.
+  const expiresAt = offer.expiresAt ? new Date(offer.expiresAt) : null;
+  const msLeft = expiresAt ? expiresAt.getTime() - now : 0;
+  const expired = ACTIVE && msLeft <= 0;
+  const hrsLeft = Math.max(0, Math.floor(msLeft / 3_600_000));
+  const minsLeft = Math.max(0, Math.floor((msLeft % 3_600_000) / 60_000));
 
   // Role-aware actions: a seller accepts the buyer's PENDING offer; a buyer
   // accepts the seller's COUNTER offer. Nobody can accept their own offer, and
@@ -127,6 +151,23 @@ export const OfferDetails: React.FC = () => {
     }
   };
 
+  // Buyer withdraws their OWN pending offer — distinct from a rejection by the
+  // other party. The backend ends it with status CANCELLED.
+  const handleCancel = async () => {
+    setSubmitting(true);
+    setError('');
+
+    try {
+      await api.post(`/offers/${id}/cancel`);
+      setSuccessMsg('Offer withdrawn. The negotiation has been cancelled.');
+      fetchOffer();
+    } catch (err: any) {
+      setError(err.message || 'Failed to withdraw offer');
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
   return (
     <div className="max-w-4xl mx-auto px-4 py-8 space-y-8">
       {/* Top Banner */}
@@ -144,17 +185,40 @@ export const OfferDetails: React.FC = () => {
             </div>
           </div>
 
-          <span
-            className={`px-3 py-1.5 rounded-xl font-extrabold text-xs tracking-wider uppercase border ${
-              offer.status === 'ACCEPTED'
-                ? 'bg-emerald-500/10 text-emerald-600 border-emerald-500/30'
-                : offer.status === 'REJECTED' || offer.status === 'EXPIRED'
-                ? 'bg-rose-500/10 text-rose-600 border-rose-500/30'
-                : 'bg-amber-500/10 text-amber-600 border-amber-500/30'
-            }`}
-          >
-            Status: {offer.status}
-          </span>
+          <div className="flex flex-col items-end gap-2">
+            <span
+              className={`px-3 py-1.5 rounded-xl font-extrabold text-xs tracking-wider uppercase border ${
+                offer.status === 'ACCEPTED'
+                  ? 'bg-emerald-500/10 text-emerald-600 border-emerald-500/30'
+                  : offer.status === 'REJECTED' || offer.status === 'EXPIRED'
+                  ? 'bg-rose-500/10 text-rose-600 border-rose-500/30'
+                  : 'bg-amber-500/10 text-amber-600 border-amber-500/30'
+              }`}
+            >
+              Status: {offer.status}
+            </span>
+
+            {ACTIVE && (
+              <>
+                <span
+                  className={`px-3 py-1 rounded-xl font-extrabold text-[11px] border ${
+                    myTurn && !expired
+                      ? 'bg-emerald-500/10 text-emerald-600 border-emerald-500/30'
+                      : 'bg-slate-500/10 text-slate-500 border-slate-500/30'
+                  }`}
+                >
+                  {expired
+                    ? 'Offer Expired'
+                    : myTurn
+                    ? 'Your Turn'
+                    : `Waiting for ${otherPartyName || 'the other party'}`}
+                </span>
+                <span className="text-[10px] font-semibold text-slate-400">
+                  {expired ? 'You cannot respond to an expired offer' : `Expires in ${hrsLeft}h ${minsLeft}m`}
+                </span>
+              </>
+            )}
+          </div>
         </div>
 
         {/* Listing Overview */}
@@ -313,7 +377,7 @@ export const OfferDetails: React.FC = () => {
               </p>
               {isBuyer && offer.status === 'PENDING' && (
                 <button
-                  onClick={handleReject}
+                  onClick={handleCancel}
                   disabled={submitting}
                   className="text-[11px] font-semibold text-rose-500 hover:underline disabled:opacity-50"
                 >

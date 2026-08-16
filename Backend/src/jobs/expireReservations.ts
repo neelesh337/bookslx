@@ -110,6 +110,63 @@ export async function expireReservedListings(): Promise<ExpirySweepResult> {
   return { releasedListings, cancelledOrders };
 }
 
+/**
+ * Marks PENDING/COUNTERED offers whose expiry window has passed as EXPIRED and
+ * notifies both parties. The server is the only authority on expiry — the
+ * browser countdown is purely visual. Each offer is only touched once (the
+ * status guard makes the sweep idempotent).
+ */
+export async function expireActiveOffers(): Promise<number> {
+  const now = new Date();
+  const expired = await prisma.offer.findMany({
+    where: { status: { in: ['PENDING', 'COUNTERED'] }, expiresAt: { lt: now } },
+    include: { listing: { select: { book: { select: { title: true } } } } },
+  });
+
+  let count = 0;
+  for (const offer of expired) {
+    const updated = await prisma.offer.updateMany({
+      where: { id: offer.id, status: { in: ['PENDING', 'COUNTERED'] } },
+      data: { status: 'EXPIRED' },
+    });
+    if (updated.count === 0) continue; // resolved concurrently — leave it alone
+
+    // Immutable audit trail for the expiry.
+    await prisma.offerHistory.create({
+      data: {
+        offerId: offer.id,
+        senderId: offer.buyerId,
+        price: offer.currentPrice,
+        message: 'Offer expired',
+        action: 'EXPIRED',
+      },
+    });
+
+    const title = '"' + offer.listing.book.title + '"';
+    await prisma.notification.createMany({
+      data: [
+        {
+          userId: offer.buyerId,
+          type: 'OFFER_EXPIRED',
+          title: 'Offer Expired',
+          message: 'Your offer for ' + title + ' has expired.',
+          link: '/offers/' + offer.id,
+        },
+        {
+          userId: offer.sellerId,
+          type: 'OFFER_EXPIRED',
+          title: 'Offer Expired',
+          message: 'The offer for ' + title + ' has expired.',
+          link: '/offers/' + offer.id,
+        },
+      ],
+    });
+
+    count += 1;
+  }
+  return count;
+}
+
 let intervalHandle: NodeJS.Timeout | null = null;
 let startupHandle: NodeJS.Timeout | null = null;
 let sweepRunning = false;
@@ -123,6 +180,11 @@ async function runSweep() {
       console.log(
         `[jobs] Released ${result.releasedListings} expired reservation(s), cancelled ${result.cancelledOrders} unpaid order(s)`
       );
+    }
+
+    const expiredOffers = await expireActiveOffers();
+    if (expiredOffers > 0) {
+      console.log(`[jobs] Expired ${expiredOffers} offer(s) whose window lapsed`);
     }
   } catch (error) {
     console.error('[jobs] Reservation expiry sweep failed:', error);
