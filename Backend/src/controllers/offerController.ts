@@ -40,7 +40,37 @@ export class OfferController {
       const result = await offerService.acceptOffer(userId, id);
       return res.json({
         success: true,
-        message: 'Offer accepted and order created!',
+        message: 'Offer accepted! The buyer must confirm the deal.',
+        data: result,
+      });
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  async confirmDeal(req: Request, res: Response, next: NextFunction) {
+    try {
+      const userId = req.user!.id;
+      const { id } = req.params;
+      const result = await offerService.confirmDeal(userId, id);
+      return res.json({
+        success: true,
+        message: 'Deal confirmed! Proceed to checkout.',
+        data: result,
+      });
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  async declineDeal(req: Request, res: Response, next: NextFunction) {
+    try {
+      const userId = req.user!.id;
+      const { id } = req.params;
+      const result = await offerService.declineDeal(userId, id);
+      return res.json({
+        success: true,
+        message: 'Deal declined. The book is back on sale.',
         data: result,
       });
     } catch (error) {

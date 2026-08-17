@@ -129,15 +129,20 @@ model ListingImage {
 }
 
 model Offer {
-  id           String   @id @default(uuid())
-  listingId    String
-  buyerId      String
-  sellerId     String
-  currentPrice Float
-  status       String   @default("PENDING") // PENDING, COUNTERED, ACCEPTED, REJECTED, EXPIRED, CANCELLED
-  expiresAt    DateTime
-  createdAt    DateTime @default(now())
-  updatedAt    DateTime @updatedAt
+  id                    String    @id @default(uuid())
+  listingId             String
+  buyerId               String
+  sellerId              String
+  currentPrice          Float
+  status                String    @default("PENDING") // PENDING, COUNTERED, SELLER_ACCEPTED, DEAL_ACCEPTED, REJECTED, EXPIRED, CANCELLED, CANCELLED_BY_BUYER
+  expiresAt             DateTime
+  // Locked the moment the seller approves the buyer's price — the order is
+  // always priced from this, never from a later listing change.
+  finalNegotiatedPrice  Float?
+  // Deadline for the buyer's final deal confirmation (SELLER_ACCEPTED state).
+  confirmationExpiresAt DateTime?
+  createdAt             DateTime  @default(now())
+  updatedAt             DateTime  @updatedAt
 
   listing   Listing        @relation(fields: [listingId], references: [id], onDelete: Cascade)
   buyer     User           @relation("BuyerOffers", fields: [buyerId], references: [id], onDelete: Cascade)

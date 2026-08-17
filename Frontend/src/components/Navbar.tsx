@@ -19,6 +19,7 @@ import {
   ChevronDown
 } from 'lucide-react';
 import { api } from '../api/client';
+import { onRealtime } from '../api/realtime';
 
 export const Navbar: React.FC = () => {
   const { user, logout } = useAuth();
@@ -40,6 +41,32 @@ export const Navbar: React.FC = () => {
       }).catch(() => {});
     }
   }, [user, location.pathname]);
+
+  // Live: any realtime event (offer/counter/accept) refreshes the badge
+  // immediately. Polling stays only as a fallback for dropped connections.
+  useEffect(() => {
+    return onRealtime(() => {
+      api.get('/notifications')
+        .then((res: any) => {
+          const unread = (res.data || []).filter((n: any) => !n.isRead).length;
+          setUnreadNotifications(unread);
+        })
+        .catch(() => {});
+    });
+  }, []);
+
+  useEffect(() => {
+    if (!user) return;
+    const t = setInterval(() => {
+      api.get('/notifications')
+        .then((res: any) => {
+          const unread = (res.data || []).filter((n: any) => !n.isRead).length;
+          setUnreadNotifications(unread);
+        })
+        .catch(() => {});
+    }, 60000);
+    return () => clearInterval(t);
+  }, [user]);
 
   const handleSearch = (e: React.FormEvent) => {
     e.preventDefault();

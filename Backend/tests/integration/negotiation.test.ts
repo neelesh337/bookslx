@@ -263,6 +263,42 @@ describe('negotiation state machine', () => {
     });
   });
 
+  describe('counter notifications', () => {
+    it('seller counter notifies the BUYER (not the seller)', async () => {
+      const { offer } = await makePendingOffer(350);
+
+      await offerService.counterOffer(seller.id, offer.id, 420);
+
+      const buyerNotifs = await prisma.notification.findMany({
+        where: { userId: buyer.id, type: 'COUNTER_OFFER' },
+      });
+      expect(buyerNotifs.length).toBe(1);
+      expect(buyerNotifs[0].message).toContain('420');
+
+      const sellerNotifs = await prisma.notification.findMany({
+        where: { userId: seller.id, type: 'COUNTER_OFFER' },
+      });
+      expect(sellerNotifs.length).toBe(0); // the seller must never be notified about their own counter
+    });
+
+    it('buyer counter notifies the SELLER (not the buyer)', async () => {
+      const { offer } = await makePendingOffer(350);
+      await offerService.counterOffer(seller.id, offer.id, 420); // seller counter
+      await offerService.counterOffer(buyer.id, offer.id, 400); // buyer counter
+
+      const sellerNotifs = await prisma.notification.findMany({
+        where: { userId: seller.id, type: 'COUNTER_OFFER' },
+      });
+      expect(sellerNotifs.length).toBe(1);
+      expect(sellerNotifs[0].message).toContain('400');
+
+      const buyerNotifs = await prisma.notification.findMany({
+        where: { userId: buyer.id, type: 'COUNTER_OFFER' },
+      });
+      expect(buyerNotifs.length).toBe(1); // only the first (seller→buyer) counter
+    });
+  });
+
   describe('price direction (counters must move toward agreement)', () => {
     it('seller counter must be strictly higher than the buyer\'s offer', async () => {
       const { offer } = await makePendingOffer(350); // buyer ₹350

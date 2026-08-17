@@ -1,5 +1,6 @@
 import React, { createContext, useContext, useState, useEffect } from 'react';
 import { api } from '../api/client';
+import { connectRealtime, disconnectRealtime } from '../api/realtime';
 import { auth } from '../config/firebase';import {
   createUserWithEmailAndPassword,
   sendEmailVerification,
@@ -116,6 +117,17 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       setPendingVerificationEmail(pending);
     }
   }, []);
+
+  // Keep a live SSE stream open while signed in, so negotiation events (offer
+  // created, counter, accept, ...) arrive instantly instead of on a poll tick.
+  useEffect(() => {
+    if (user) {
+      connectRealtime(localStorage.getItem('token') || '');
+    } else {
+      disconnectRealtime();
+    }
+    return () => disconnectRealtime();
+  }, [user]);
 
   // While an email verification is pending, poll Firebase for the account's
   // verification status. This lets the login page react to the link being

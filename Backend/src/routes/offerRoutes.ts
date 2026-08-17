@@ -16,6 +16,8 @@ router.get('/:id', (req, res, next) => offerController.getOfferById(req, res, ne
 router.post('/:id/cancel', (req, res, next) => offerController.cancelOffer(req, res, next));
 router.post('/:id/counter', apiRateLimiter, (req, res, next) => offerController.counterOffer(req, res, next));
 router.post('/:id/accept', (req, res, next) => offerController.acceptOffer(req, res, next));
+router.post('/:id/confirm', (req, res, next) => offerController.confirmDeal(req, res, next));
+router.post('/:id/decline', (req, res, next) => offerController.declineDeal(req, res, next));
 router.post('/:id/reject', (req, res, next) => offerController.rejectOffer(req, res, next));
 
 export default router;

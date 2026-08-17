@@ -12,6 +12,7 @@ import disputeRoutes from './routes/disputeRoutes';
 import reviewRoutes from './routes/reviewRoutes';
 import wishlistRoutes from './routes/wishlistRoutes';
 import notificationRoutes from './routes/notificationRoutes';
+import realtimeRoutes from './routes/realtimeRoutes';
 import adminRoutes from './routes/adminRoutes';
 import paymentRoutes from './routes/paymentRoutes';
 import logisticsRoutes from './routes/logisticsRoutes';
@@ -70,6 +71,7 @@ app.use('/api/disputes', disputeRoutes);
 app.use('/api/reviews', reviewRoutes);
 app.use('/api/wishlist', wishlistRoutes);
 app.use('/api/notifications', notificationRoutes);
+app.use('/api/realtime', realtimeRoutes);
 app.use('/api/admin', adminRoutes);
 
 // Error Handler Middleware

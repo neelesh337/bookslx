@@ -1,4 +1,5 @@
 import { prisma } from '../config/db';
+import { realtimeHub, RealtimeEvent } from '../services/realtimeService';
 
 // Listings are reserved for 15 minutes while the buyer completes payment.
 // This job sweeps for lapsed reservations on a regular interval.
@@ -56,6 +57,7 @@ export async function expireReservedListings(): Promise<ExpirySweepResult> {
 
   let releasedListings = 0;
   let cancelledOrders = 0;
+  const events: Array<{ userId: string; event: RealtimeEvent }> = [];
 
   await prisma.$transaction(async (tx) => {
     for (const listing of expiredListings) {
@@ -88,6 +90,16 @@ export async function expireReservedListings(): Promise<ExpirySweepResult> {
             link: `/books/${listing.id}`,
           },
         });
+        events.push({
+          userId: order.buyerId,
+          event: {
+            type: 'ORDER_EXPIRED',
+            title: 'Order Expired — Payment Not Completed',
+            message: `Your order for "${listing.book.title}" was cancelled because payment wasn't completed within the reservation window. The book is back on sale.`,
+            link: `/books/${listing.id}`,
+            timestamp: new Date().toISOString(),
+          },
+        });
 
         cancelledOrders += 1;
       }
@@ -106,6 +118,10 @@ export async function expireReservedListings(): Promise<ExpirySweepResult> {
       if (released.count > 0) releasedListings += 1;
     }
   });
+
+  for (const e of events) {
+    realtimeHub.publish(e.userId, e.event);
+  }
 
   return { releasedListings, cancelledOrders };
 }
@@ -160,6 +176,22 @@ export async function expireActiveOffers(): Promise<number> {
           link: '/offers/' + offer.id,
         },
       ],
+    });
+
+    const timestamp = new Date().toISOString();
+    realtimeHub.publish(offer.buyerId, {
+      type: 'OFFER_EXPIRED',
+      title: 'Offer Expired',
+      message: 'Your offer for ' + title + ' has expired.',
+      link: '/offers/' + offer.id,
+      timestamp,
+    });
+    realtimeHub.publish(offer.sellerId, {
+      type: 'OFFER_EXPIRED',
+      title: 'Offer Expired',
+      message: 'The offer for ' + title + ' has expired.',
+      link: '/offers/' + offer.id,
+      timestamp,
     });
 
     count += 1;

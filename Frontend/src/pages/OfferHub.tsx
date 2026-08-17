@@ -116,14 +116,16 @@ export const OfferHub: React.FC = () => {
 
                   <span
                     className={`px-3 py-1 rounded-xl text-xs font-extrabold border ${
-                      offer.status === 'ACCEPTED'
+                      offer.status === 'SELLER_ACCEPTED' || offer.status === 'DEAL_ACCEPTED'
                         ? 'bg-emerald-500/10 text-emerald-600 border-emerald-500/30'
-                        : offer.status === 'REJECTED' || offer.status === 'EXPIRED'
+                        : offer.status === 'REJECTED' || offer.status === 'EXPIRED' || offer.status === 'CANCELLED' || offer.status === 'CANCELLED_BY_BUYER'
                         ? 'bg-rose-500/10 text-rose-600 border-rose-500/30'
+                        : offer.status === 'COUNTERED'
+                        ? 'bg-blue-500/10 text-blue-600 border-blue-500/30'
                         : 'bg-amber-500/10 text-amber-600 border-amber-500/30'
                     }`}
                   >
-                    {offer.status}
+                    {offer.status?.replace(/_/g, ' ')}
                   </span>
                 </div>
               </div>
