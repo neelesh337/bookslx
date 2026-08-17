@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { Link } from 'react-router-dom';
 import { api } from '../api/client';
+import { onRealtime } from '../api/realtime';
 import { ArrowRightLeft, Package, MessageSquare } from 'lucide-react';
 
 type OfferTab = 'seller' | 'buyer';
@@ -10,8 +11,8 @@ export const OfferHub: React.FC = () => {
   const [offers, setOffers] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
 
-  const fetchOffers = useCallback((role: OfferTab) => {
-    setLoading(true);
+  const fetchOffers = useCallback((role: OfferTab, silent = false) => {
+    if (!silent) setLoading(true);
     api.get('/offers', { params: { role } })
       .then((res: any) => setOffers(res.data || []))
       .catch(() => {})
@@ -20,6 +21,20 @@ export const OfferHub: React.FC = () => {
 
   useEffect(() => {
     fetchOffers(tab);
+  }, [tab, fetchOffers]);
+
+  // Live: any negotiation event refreshes the offer list immediately.
+  useEffect(() => {
+    return onRealtime(() => {
+      fetchOffers(tab, true);
+    });
+  }, [tab, fetchOffers]);
+
+  // Polling fallback — SSE may be blocked by reverse proxies (Render) that
+  // buffer event-stream responses, so we poll as a safety net.
+  useEffect(() => {
+    const t = setInterval(() => fetchOffers(tab, true), 15000);
+    return () => clearInterval(t);
   }, [tab, fetchOffers]);
 
   const switchTab = (next: OfferTab) => {

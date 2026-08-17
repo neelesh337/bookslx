@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { useAuth } from '../context/AuthContext';
 import { api } from '../api/client';
+import { onRealtime } from '../api/realtime';
 import { Link, useLocation } from 'react-router-dom';
 import {
   ShoppingBag,
@@ -89,6 +90,23 @@ export const UserProfile: React.FC = () => {
 
     fetchWishlist();
     fetchNotifications();
+  }, [user]);
+
+  // Live: any realtime event (offer/counter/accept) refreshes notifications
+  // immediately. SSE may be blocked by reverse proxies on deployed builds, so
+  // polling below serves as a safety net.
+  useEffect(() => {
+    return onRealtime(() => {
+      fetchNotifications();
+    });
+  }, []);
+
+  // Polling fallback — refresh notifications every 15 seconds so the buyer
+  // sees counter-offers even when SSE is buffered by Render's proxy.
+  useEffect(() => {
+    if (!user) return;
+    const t = setInterval(() => fetchNotifications(), 15000);
+    return () => clearInterval(t);
   }, [user]);
 
   const handleAddAddress = async (e: React.FormEvent) => {
